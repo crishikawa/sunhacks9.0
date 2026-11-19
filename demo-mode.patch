@@ -1,0 +1,287 @@
+diff --git a/.env.example b/.env.example
+index 95d97b5..5801c49 100644
+--- a/.env.example
++++ b/.env.example
+@@ -11,3 +11,7 @@ SUPABASE_SERVICE_ROLE_KEY=
+ 
+ # Required in production. The desk page sends this on scan and reset.
+ DESK_ADMIN_SECRET=
++
++# Public demo. true = no xAI calls, no Supabase (book in server memory), desk secret optional.
++# Use this for a shared demo link so nothing can run up a bill.
++DEMO_MODE=
+diff --git a/README.md b/README.md
+index d807eda..9231847 100644
+--- a/README.md
++++ b/README.md
+@@ -4,6 +4,8 @@ Paper-trading desk for Bitcoin, Ethereum, and Solana. You set four gates. A scan
+ 
+ Hackathon prototype. The book is shared until accounts land. Without an xAI key, scans walk a labeled sample sequence.
+ 
++> **The live link runs in demo mode.** Sentiment comes from a labeled sample sequence and Tick answers from desk data, so the public site makes no paid API calls. To see live Grok sentiment, run it locally with your own xAI key (below).
++
+ **Live:** _deploy URL goes here after Vercel ships_ · Desk: `/market` · Brief: `GET /api/brief`
+ 
+ ## How we use Cursor and Grok Bot
+@@ -62,7 +64,8 @@ Copy `.env.example` to `.env.local`.
+ | `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_URL` | Stored book | `lib/supabase.ts` |
+ | `SUPABASE_SERVICE_ROLE_KEY` | Server writes | `lib/supabase.ts` (server only; never `NEXT_PUBLIC_`) |
+ | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_ANON_KEY` | Browser realtime | `GET /api/config` |
+-| `DESK_ADMIN_SECRET` | Protecting scan and reset | `lib/desk-secret.ts` — required when `VERCEL_ENV=production` |
++| `DESK_ADMIN_SECRET` | Protecting scan and reset | `lib/desk-secret.ts` — required when `VERCEL_ENV=production`, unless demo mode is on |
++| `DEMO_MODE` | Public demo link | `lib/demo.ts` — `true` turns off xAI and Supabase and makes the desk secret optional |
+ 
+ Apply `supabase/schema.sql` in the Supabase SQL editor before the first stored scan. A project created before the watchlist existed also needs `supabase/migrations/002_watchlist_holdings.sql` once (additive; it copies existing BTC/ETH/SOL balances into `holdings`). Realtime is enabled for `sentiment_signals` and `trades`.
+ 
+@@ -80,6 +83,16 @@ Production target: Vercel + Supabase.
+ 
+ `VERCEL_ENV=production` refuses a scan when Supabase is missing. The desk secret stops a bare POST; it is not an account system.
+ 
++## Demo mode
++
++Set `DEMO_MODE=true` for a public link that can't run up a bill or break when a free database pauses.
++
++- No xAI requests, even if `XAI_API_KEY` is still set. Scans use the sample sequence; Tick answers from desk data.
++- No Supabase. The book lives in server memory and starts over at $10,000 when the server restarts.
++- `DESK_ADMIN_SECRET` is optional, since scan, chat and reset no longer spend anything.
++
++Prices still come from CoinGecko's free public API.
++
+ ## Limits
+ 
+ - One shared book until per-user accounts ship. Reset clears trades, restores $10,000, leaves signals.
+diff --git a/app/api/chat/route.ts b/app/api/chat/route.ts
+index b430e07..1bc2c8c 100644
+--- a/app/api/chat/route.ts
++++ b/app/api/chat/route.ts
+@@ -1,5 +1,6 @@
+ import { deskBrief, moodFor, parseChat, sampleReply, TICK_PERSONA, type ChatMessage, type DeskContext } from "@/lib/chat";
+-import { assertDeskSecret, DeskAuthError } from "@/lib/desk-secret";
++import { xaiApiKey } from "@/lib/demo";
++import { assertDeskSecret, deskEnv, DeskAuthError } from "@/lib/desk-secret";
+ import { MODEL, apiError, readJson, textFromResponses } from "@/lib/grok";
+ import { beginRequest, errorMessage, json } from "@/lib/http";
+ import { getMarket, type Quote } from "@/lib/prices";
+@@ -79,10 +80,7 @@ async function askGrok(apiKey: string, messages: ChatMessage[], brief: string):
+ export async function POST(request: Request) {
+   await beginRequest();
+   try {
+-    assertDeskSecret(request.headers.get("x-desk-secret"), {
+-      secret: process.env.DESK_ADMIN_SECRET,
+-      production: process.env.VERCEL_ENV === "production",
+-    });
++    assertDeskSecret(request.headers.get("x-desk-secret"), deskEnv());
+   } catch (error) {
+     return json({ error: error instanceof DeskAuthError ? "Unauthorized" : errorMessage(error) }, 401);
+   }
+@@ -98,7 +96,7 @@ export async function POST(request: Request) {
+     const desk = await loadDesk();
+     const question = messages[messages.length - 1].content;
+     const mood = moodFor(question, desk);
+-    const apiKey = process.env.XAI_API_KEY;
++    const apiKey = xaiApiKey();
+     if (!apiKey) return json({ reply: sampleReply(question, desk), source: "sample", mood });
+     const reply = (await askGrok(apiKey, messages, deskBrief(desk))).replace(/\*\*(.+?)\*\*/g, "$1");
+     return json({ reply, source: "grok", mood });
+diff --git a/app/api/grok-scan/route.ts b/app/api/grok-scan/route.ts
+index ccd643f..c9a3f21 100644
+--- a/app/api/grok-scan/route.ts
++++ b/app/api/grok-scan/route.ts
+@@ -1,13 +1,10 @@
+ import { beginRequest, errorMessage, json } from "@/lib/http";
+-import { assertDeskSecret, DeskAuthError } from "@/lib/desk-secret";
++import { assertDeskSecret, deskEnv, DeskAuthError } from "@/lib/desk-secret";
+ import { runScan } from "@/lib/scan";
+ 
+ function rejectLocked(request: Request): Response | null {
+   try {
+-    assertDeskSecret(request.headers.get("x-desk-secret"), {
+-      secret: process.env.DESK_ADMIN_SECRET,
+-      production: process.env.VERCEL_ENV === "production",
+-    });
++    assertDeskSecret(request.headers.get("x-desk-secret"), deskEnv());
+     return null;
+   } catch (error) {
+     if (error instanceof DeskAuthError) return json({ error: "Unauthorized" }, 401);
+diff --git a/app/api/portfolio/reset/route.ts b/app/api/portfolio/reset/route.ts
+index 548f64e..097cc64 100644
+--- a/app/api/portfolio/reset/route.ts
++++ b/app/api/portfolio/reset/route.ts
+@@ -1,14 +1,11 @@
+ import { beginRequest, errorMessage, json } from "@/lib/http";
+-import { assertDeskSecret, DeskAuthError } from "@/lib/desk-secret";
++import { assertDeskSecret, deskEnv, DeskAuthError } from "@/lib/desk-secret";
+ import { resetDemo } from "@/lib/repository";
+ 
+ export async function POST(request: Request) {
+   await beginRequest();
+   try {
+-    assertDeskSecret(request.headers.get("x-desk-secret"), {
+-      secret: process.env.DESK_ADMIN_SECRET,
+-      production: process.env.VERCEL_ENV === "production",
+-    });
++    assertDeskSecret(request.headers.get("x-desk-secret"), deskEnv());
+   } catch (error) {
+     if (error instanceof DeskAuthError) return json({ error: "Unauthorized" }, 401);
+     return json({ error: errorMessage(error) }, 401);
+diff --git a/components/ask-tick.tsx b/components/ask-tick.tsx
+index 876730d..b921ab1 100644
+--- a/components/ask-tick.tsx
++++ b/components/ask-tick.tsx
+@@ -9,7 +9,7 @@ type Message = { role: "user" | "assistant"; content: string; source?: Source; a
+ 
+ const SOURCE_LABEL: Record<Source, string> = {
+   grok: "Grok · desk data, X and web",
+-  sample: "Desk data only · add an xAI key for live X search",
++  sample: "Demo mode · answers from desk data",
+ };
+ 
+ export function AskTick({ deskSecret, coin }: { deskSecret: string; coin: string | null }) {
+diff --git a/components/dashboard.tsx b/components/dashboard.tsx
+index 63678e2..e557c74 100644
+--- a/components/dashboard.tsx
++++ b/components/dashboard.tsx
+@@ -453,7 +453,7 @@ export function Dashboard({ deskSecret = "" }: { deskSecret?: string }) {
+       <AskTick deskSecret={deskSecret} coin={coin} />
+ 
+       <footer className="mx-auto flex w-full max-w-[1200px] flex-wrap gap-x-6 gap-y-1 border-t border-line px-4 py-5 text-xs text-muted sm:px-6">
+-        <span>Sentiment: {config?.sentimentMode === "grok" ? "Grok, live" : "sample data (no xAI key)"}</span>
++        <span>Sentiment: {config?.sentimentMode === "grok" ? "Grok, live" : "sample data (demo mode)"}</span>
+         <span>Book: {config?.dataMode === "supabase" ? "Supabase" : "server memory"}</span>
+         <span>Realtime: {config?.supabase ? "on" : "off"}</span>
+         <span className="ml-auto">
+diff --git a/lib/demo.test.ts b/lib/demo.test.ts
+new file mode 100644
+index 0000000..b8312c8
+--- /dev/null
++++ b/lib/demo.test.ts
+@@ -0,0 +1,23 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import { isDemoMode, xaiApiKey } from "./demo";
++import { deskEnv } from "./desk-secret";
++
++test("demo mode is off unless DEMO_MODE is true", () => {
++  assert.equal(isDemoMode({}), false);
++  assert.equal(isDemoMode({ DEMO_MODE: "false" }), false);
++  assert.equal(isDemoMode({ DEMO_MODE: "true" }), true);
++  assert.equal(isDemoMode({ DEMO_MODE: " TRUE " }), true);
++});
++
++test("demo mode hides the xAI key even when one is set", () => {
++  assert.equal(xaiApiKey({ XAI_API_KEY: "xai-live" }), "xai-live");
++  assert.equal(xaiApiKey({ XAI_API_KEY: "xai-live", DEMO_MODE: "true" }), undefined);
++  assert.equal(xaiApiKey({}), undefined);
++});
++
++test("demo mode lets production run without a desk secret", () => {
++  assert.equal(deskEnv({ VERCEL_ENV: "production" }).production, true);
++  assert.equal(deskEnv({ VERCEL_ENV: "production", DEMO_MODE: "true" }).production, false);
++  assert.equal(deskEnv({ DESK_ADMIN_SECRET: "s" }).secret, "s");
++});
+diff --git a/lib/demo.ts b/lib/demo.ts
+new file mode 100644
+index 0000000..59a294f
+--- /dev/null
++++ b/lib/demo.ts
+@@ -0,0 +1,16 @@
++type Env = Record<string, string | undefined>;
++
++/**
++ * Public demo mode. With DEMO_MODE=true the app makes no paid or stateful calls:
++ * no xAI requests (sample sentiment and desk-data chat), no Supabase (the book lives
++ * in server memory), and the desk secret is optional. Safe to leave on a public URL.
++ */
++export function isDemoMode(env: Env = process.env): boolean {
++  return env.DEMO_MODE?.trim().toLowerCase() === "true";
++}
++
++/** The xAI key, or undefined in demo mode so no request can ever be billed. */
++export function xaiApiKey(env: Env = process.env): string | undefined {
++  if (isDemoMode(env)) return undefined;
++  return env.XAI_API_KEY || undefined;
++}
+diff --git a/lib/desk-secret.ts b/lib/desk-secret.ts
+index e2b23f2..ae06a1c 100644
+--- a/lib/desk-secret.ts
++++ b/lib/desk-secret.ts
+@@ -1,3 +1,5 @@
++import { isDemoMode } from "./demo";
++
+ export class DeskAuthError extends Error {
+   readonly status = 401;
+ }
+@@ -12,3 +14,14 @@ export function assertDeskSecret(
+   }
+   if (header !== env.secret) throw new DeskAuthError("Unauthorized");
+ }
++
++/** Settings for assertDeskSecret. Demo mode spends nothing, so it does not require a secret. */
++export function deskEnv(env: Record<string, string | undefined> = process.env): {
++  secret: string | undefined;
++  production: boolean;
++} {
++  return {
++    secret: env.DESK_ADMIN_SECRET || undefined,
++    production: env.VERCEL_ENV === "production" && !isDemoMode(env),
++  };
++}
+diff --git a/lib/grok.ts b/lib/grok.ts
+index 2338fd8..c6bfea4 100644
+--- a/lib/grok.ts
++++ b/lib/grok.ts
+@@ -1,5 +1,6 @@
+ import type { Asset, SentimentSource, SignalDraft, Ticker } from "@/types/database";
+ import { isRecommendedAction } from "@/lib/trading";
++import { xaiApiKey } from "@/lib/demo";
+ 
+ export const MODEL = "grok-4.3";
+ 
+@@ -52,7 +53,7 @@ const sampleState = globalThis as { __sampleScan?: number };
+ 
+ export async function analyzeTicker(asset: Asset): Promise<{ draft: SignalDraft; source: SentimentSource }> {
+   const ticker = asset.symbol;
+-  const apiKey = process.env.XAI_API_KEY;
++  const apiKey = xaiApiKey();
+   if (!apiKey) return { draft: sampleDraft(ticker), source: "sample" };
+ 
+   const prompt = [
+diff --git a/lib/supabase.ts b/lib/supabase.ts
+index cc18ab3..24959cb 100644
+--- a/lib/supabase.ts
++++ b/lib/supabase.ts
+@@ -1,4 +1,5 @@
+ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
++import { isDemoMode, xaiApiKey } from "@/lib/demo";
+ 
+ let service: SupabaseClient | undefined;
+ 
+@@ -18,7 +19,7 @@ function anonKey(): string | undefined {
+ export function getServiceClient(): SupabaseClient | null {
+   const url = supabaseUrl();
+   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+-  if (!url || !key) return null;
++  if (isDemoMode() || !url || !key) return null;
+   service ??= createClient(url, key, {
+     auth: { persistSession: false, autoRefreshToken: false },
+   });
+@@ -28,16 +29,16 @@ export function getServiceClient(): SupabaseClient | null {
+ export function getRealtimeConfig(): { url: string; anonKey: string } | null {
+   const url = supabaseUrl();
+   const key = anonKey();
+-  if (!url || !key) return null;
++  if (isDemoMode() || !url || !key) return null;
+   return { url, anonKey: key };
+ }
+ 
+ export function sentimentMode(): "grok" | "sample" {
+-  return process.env.XAI_API_KEY ? "grok" : "sample";
++  return xaiApiKey() ? "grok" : "sample";
+ }
+ 
+ export function assertDurableBook(): void {
+-  if (process.env.VERCEL_ENV === "production" && !getServiceClient()) {
++  if (process.env.VERCEL_ENV === "production" && !isDemoMode() && !getServiceClient()) {
+     throw new Error("Production requires Supabase. Memory mode is local only.");
+   }
+ }
