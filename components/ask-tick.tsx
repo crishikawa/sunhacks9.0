@@ -9,7 +9,7 @@ type Message = { role: "user" | "assistant"; content: string; source?: Source; a
 
 const SOURCE_LABEL: Record<Source, string> = {
   grok: "Grok · desk data, X and web",
-  sample: "Desk data only · add an xAI key for live X search",
+  sample: "Demo mode · answers from desk data",
 };
 
 export function AskTick({ deskSecret, coin }: { deskSecret: string; coin: string | null }) {

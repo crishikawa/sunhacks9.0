@@ -1,5 +1,6 @@
 import type { Asset, SentimentSource, SignalDraft, Ticker } from "@/types/database";
 import { isRecommendedAction } from "@/lib/trading";
+import { xaiApiKey } from "@/lib/demo";
 
 export const MODEL = "grok-4.3";
 
@@ -52,7 +53,7 @@ const sampleState = globalThis as { __sampleScan?: number };
 
 export async function analyzeTicker(asset: Asset): Promise<{ draft: SignalDraft; source: SentimentSource }> {
   const ticker = asset.symbol;
-  const apiKey = process.env.XAI_API_KEY;
+  const apiKey = xaiApiKey();
   if (!apiKey) return { draft: sampleDraft(ticker), source: "sample" };
 
   const prompt = [

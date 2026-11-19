@@ -1,5 +1,6 @@
 import { deskBrief, moodFor, parseChat, sampleReply, TICK_PERSONA, type ChatMessage, type DeskContext } from "@/lib/chat";
-import { assertDeskSecret, DeskAuthError } from "@/lib/desk-secret";
+import { xaiApiKey } from "@/lib/demo";
+import { assertDeskSecret, deskEnv, DeskAuthError } from "@/lib/desk-secret";
 import { MODEL, apiError, readJson, textFromResponses } from "@/lib/grok";
 import { beginRequest, errorMessage, json } from "@/lib/http";
 import { getMarket, type Quote } from "@/lib/prices";
@@ -79,10 +80,7 @@ async function askGrok(apiKey: string, messages: ChatMessage[], brief: string): 
 export async function POST(request: Request) {
   await beginRequest();
   try {
-    assertDeskSecret(request.headers.get("x-desk-secret"), {
-      secret: process.env.DESK_ADMIN_SECRET,
-      production: process.env.VERCEL_ENV === "production",
-    });
+    assertDeskSecret(request.headers.get("x-desk-secret"), deskEnv());
   } catch (error) {
     return json({ error: error instanceof DeskAuthError ? "Unauthorized" : errorMessage(error) }, 401);
   }
@@ -98,7 +96,7 @@ export async function POST(request: Request) {
     const desk = await loadDesk();
     const question = messages[messages.length - 1].content;
     const mood = moodFor(question, desk);
-    const apiKey = process.env.XAI_API_KEY;
+    const apiKey = xaiApiKey();
     if (!apiKey) return json({ reply: sampleReply(question, desk), source: "sample", mood });
     const reply = (await askGrok(apiKey, messages, deskBrief(desk))).replace(/\*\*(.+?)\*\*/g, "$1");
     return json({ reply, source: "grok", mood });

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { isDemoMode, xaiApiKey } from "@/lib/demo";
 
 let service: SupabaseClient | undefined;
 
@@ -18,7 +19,7 @@ function anonKey(): string | undefined {
 export function getServiceClient(): SupabaseClient | null {
   const url = supabaseUrl();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
+  if (isDemoMode() || !url || !key) return null;
   service ??= createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -28,16 +29,16 @@ export function getServiceClient(): SupabaseClient | null {
 export function getRealtimeConfig(): { url: string; anonKey: string } | null {
   const url = supabaseUrl();
   const key = anonKey();
-  if (!url || !key) return null;
+  if (isDemoMode() || !url || !key) return null;
   return { url, anonKey: key };
 }
 
 export function sentimentMode(): "grok" | "sample" {
-  return process.env.XAI_API_KEY ? "grok" : "sample";
+  return xaiApiKey() ? "grok" : "sample";
 }
 
 export function assertDurableBook(): void {
-  if (process.env.VERCEL_ENV === "production" && !getServiceClient()) {
+  if (process.env.VERCEL_ENV === "production" && !isDemoMode() && !getServiceClient()) {
     throw new Error("Production requires Supabase. Memory mode is local only.");
   }
 }

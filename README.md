@@ -4,6 +4,8 @@ Paper-trading desk for Bitcoin, Ethereum, and Solana. You set four gates. A scan
 
 Hackathon prototype. The book is shared until accounts land. Without an xAI key, scans walk a labeled sample sequence.
 
+> **The live link runs in demo mode.** Sentiment comes from a labeled sample sequence and Tick answers from desk data, so the public site makes no paid API calls. To see live Grok sentiment, run it locally with your own xAI key (below).
+
 **Live:** _deploy URL goes here after Vercel ships_ · Desk: `/market` · Brief: `GET /api/brief`
 
 ## How we use Cursor and Grok Bot
@@ -62,7 +64,8 @@ Copy `.env.example` to `.env.local`.
 | `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_URL` | Stored book | `lib/supabase.ts` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server writes | `lib/supabase.ts` (server only; never `NEXT_PUBLIC_`) |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_ANON_KEY` | Browser realtime | `GET /api/config` |
-| `DESK_ADMIN_SECRET` | Protecting scan and reset | `lib/desk-secret.ts` — required when `VERCEL_ENV=production` |
+| `DESK_ADMIN_SECRET` | Protecting scan and reset | `lib/desk-secret.ts` — required when `VERCEL_ENV=production`, unless demo mode is on |
+| `DEMO_MODE` | Public demo link | `lib/demo.ts` — `true` turns off xAI and Supabase and makes the desk secret optional |
 
 Apply `supabase/schema.sql` in the Supabase SQL editor before the first stored scan. A project created before the watchlist existed also needs `supabase/migrations/002_watchlist_holdings.sql` once (additive; it copies existing BTC/ETH/SOL balances into `holdings`). Realtime is enabled for `sentiment_signals` and `trades`.
 
@@ -79,6 +82,16 @@ Production target: Vercel + Supabase.
 7. Add a custom domain in Vercel after the `*.vercel.app` URL already works.
 
 `VERCEL_ENV=production` refuses a scan when Supabase is missing. The desk secret stops a bare POST; it is not an account system.
+
+## Demo mode
+
+Set `DEMO_MODE=true` for a public link that can't run up a bill or break when a free database pauses.
+
+- No xAI requests, even if `XAI_API_KEY` is still set. Scans use the sample sequence; Tick answers from desk data.
+- No Supabase. The book lives in server memory and starts over at $10,000 when the server restarts.
+- `DESK_ADMIN_SECRET` is optional, since scan, chat and reset no longer spend anything.
+
+Prices still come from CoinGecko's free public API.
 
 ## Limits
 

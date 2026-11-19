@@ -453,7 +453,7 @@ export function Dashboard({ deskSecret = "" }: { deskSecret?: string }) {
       <AskTick deskSecret={deskSecret} coin={coin} />
 
       <footer className="mx-auto flex w-full max-w-[1200px] flex-wrap gap-x-6 gap-y-1 border-t border-line px-4 py-5 text-xs text-muted sm:px-6">
-        <span>Sentiment: {config?.sentimentMode === "grok" ? "Grok, live" : "sample data (no xAI key)"}</span>
+        <span>Sentiment: {config?.sentimentMode === "grok" ? "Grok, live" : "sample data (demo mode)"}</span>
         <span>Book: {config?.dataMode === "supabase" ? "Supabase" : "server memory"}</span>
         <span>Realtime: {config?.supabase ? "on" : "off"}</span>
         <span className="ml-auto">

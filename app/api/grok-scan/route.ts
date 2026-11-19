@@ -1,13 +1,10 @@
 import { beginRequest, errorMessage, json } from "@/lib/http";
-import { assertDeskSecret, DeskAuthError } from "@/lib/desk-secret";
+import { assertDeskSecret, deskEnv, DeskAuthError } from "@/lib/desk-secret";
 import { runScan } from "@/lib/scan";
 
 function rejectLocked(request: Request): Response | null {
   try {
-    assertDeskSecret(request.headers.get("x-desk-secret"), {
-      secret: process.env.DESK_ADMIN_SECRET,
-      production: process.env.VERCEL_ENV === "production",
-    });
+    assertDeskSecret(request.headers.get("x-desk-secret"), deskEnv());
     return null;
   } catch (error) {
     if (error instanceof DeskAuthError) return json({ error: "Unauthorized" }, 401);

@@ -1,3 +1,5 @@
+import { isDemoMode } from "./demo";
+
 export class DeskAuthError extends Error {
   readonly status = 401;
 }
@@ -11,4 +13,15 @@ export function assertDeskSecret(
     return;
   }
   if (header !== env.secret) throw new DeskAuthError("Unauthorized");
+}
+
+/** Settings for assertDeskSecret. Demo mode spends nothing, so it does not require a secret. */
+export function deskEnv(env: Record<string, string | undefined> = process.env): {
+  secret: string | undefined;
+  production: boolean;
+} {
+  return {
+    secret: env.DESK_ADMIN_SECRET || undefined,
+    production: env.VERCEL_ENV === "production" && !isDemoMode(env),
+  };
 }
